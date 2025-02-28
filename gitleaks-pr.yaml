@@ -1,0 +1,50 @@
+name: Gitleaks PR Scan
+
+on:
+  pull_request: {}
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Fetch all history for a comprehensive scan
+
+    - name: Run Gitleaks
+      run: |
+        docker run --rm -v ${{ github.workspace }}:/repo zricethezav/gitleaks:latest detect -v -s /repo --log-opts "-p -n 2" -f json -r /repo/gitleaks-report.json -c /repo/.gitleaks.toml 
+
+    - name: Verify Gitleaks report
+      run: |
+        if [ -f gitleaks-report.json ]; then
+          echo "Gitleaks report exists and has the following contents:"
+          cat gitleaks-report.json
+        else
+          echo "Gitleaks report does not exist"
+          exit 1
+        fi
+
+    - name: Upload Gitleaks report
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: gitleaks-report
+        path: gitleaks-report.json
+
+    - name: Post JSON report as comment on PR
+      if: failure()  # Ensure this step runs only if the previous step failed
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          const jsonReport = fs.readFileSync('gitleaks-report.json', 'utf8');
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `### Gitleaks JSON Report\n\n\`\`\`json\n${jsonReport}\n\`\`\``
+          });
